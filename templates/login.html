@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CardioHome - Login</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', sans-serif;
+            background: url('tu_imagen_fondo.jpg') center/cover no-repeat;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-box {
+            background-color: rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 0 20px rgba(0,0,0,0.2);
+            width: 350px;
+        }
+        .login-box h2 {
+            color: #fff;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .login-box input[type="text"],
+        .login-box input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 10px;
+            border: none;
+            outline: none;
+        }
+        .login-box button {
+            width: 100%;
+            padding: 10px;
+            background: #1a73e8;
+            border: none;
+            color: white;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        .logo {
+            display: block;
+            margin: 0 auto 20px auto;
+            max-width: 120px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <img src="static/cardiohome.png" alt="CardioHome Logo" class="logo">
+        <h2>Ingreso Médico</h2>
+        <form action="/login" method="POST">
+            <input type="text" name="username" placeholder="Usuario" required>
+            <input type="password" name="password" placeholder="Contraseña" required>
+            <button type="submit">Ingresar</button>
+        </form>
+    </div>
+</body>
+</html>
+
+
