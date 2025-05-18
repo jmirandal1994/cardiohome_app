@@ -1,39 +1,30 @@
+
 from flask import Flask, render_template, request, redirect, session, url_for, flash
 import os
+import requests
 from werkzeug.utils import secure_filename
-import smtplib
-from email.message import EmailMessage
 
 # --- Configuración inicial ---
 app = Flask(__name__)
 app.secret_key = 'clave_super_segura'
 UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'pdf', 'docx'}
+ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'xls', 'xlsx'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# --- Simulación de usuarios con establecimientos asignados ---
+# --- Usuarios simulados ---
 USUARIOS = {
-    'admin': {
-        'password': 'admin123',
-        'establecimientos': []
-    },
-    'doctora1': {
-        'password': '1234',
-        'establecimientos': ['Escuela A', 'Liceo B']
-    },
-    'doctora2': {
-        'password': 'abcd',
-        'establecimientos': []
-    }
+    'admin': {'password': 'admin123', 'establecimientos': []},
+    'doctora1': {'password': '1234', 'establecimientos': ['Escuela A', 'Liceo B']},
+    'doctora2': {'password': 'abcd', 'establecimientos': []}
 }
 
-# Eventos calendario (podría ir en un archivo externo si se desea)
+# --- Eventos simulados ---
 EVENTOS = [
     {'fecha': '20/05/2025', 'horario': '09:00 - 10:30', 'establecimiento': 'Escuela A', 'obs': 'Evaluación inicial'},
     {'fecha': '21/05/2025', 'horario': '11:00 - 12:30', 'establecimiento': 'Liceo B', 'obs': 'Entrega de informes'}
 ]
 
-# --- Verifica tipo de archivo permitido ---
+# --- Funciones auxiliares ---
 def permitido(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -77,33 +68,18 @@ def admin_agregar():
     if archivo and permitido(archivo.filename):
         filename = secure_filename(f'{nombre}.pdf')
         archivo.save(os.path.join('static/formularios', filename))
-
-        # Agregar el colegio al perfil de la doctora
-        if doctora in USUARIOS:
-            if nombre not in USUARIOS[doctora]['establecimientos']:
-                USUARIOS[doctora]['establecimientos'].append(nombre)
-
-        # Agregar al calendario
-        EVENTOS.append({
-            'fecha': fecha,
-            'horario': horario,
-            'establecimiento': nombre,
-            'obs': obs
-        })
-
-        print(f'NUEVO: {nombre}, {fecha}, {horario}, {obs}, asignado a {doctora}')
-
+        if doctora in USUARIOS and nombre not in USUARIOS[doctora]['establecimientos']:
+            USUARIOS[doctora]['establecimientos'].append(nombre)
+        EVENTOS.append({'fecha': fecha, 'horario': horario, 'establecimiento': nombre, 'obs': obs})
     return redirect(url_for('dashboard'))
 
 @app.route('/subir/<establecimiento>', methods=['POST'])
 def subir(establecimiento):
     if 'usuario' not in session:
         return redirect(url_for('index'))
-
     archivos = request.files.getlist('archivo')
     if not archivos or archivos[0].filename == '':
         return 'No se seleccionó ningún archivo.', 400
-
     mensajes = []
     for archivo in archivos:
         if permitido(archivo.filename):
@@ -113,40 +89,51 @@ def subir(establecimiento):
             mensajes.append(f'✔ {archivo.filename}')
         else:
             mensajes.append(f'✖ {archivo.filename} (no permitido)')
-
+    enviar_correo_sendgrid(
+        asunto=f'Nuevos formularios desde {establecimiento}',
+        cuerpo=f'Doctora: {session["usuario"]}\nEstablecimiento: {establecimiento}\nSe subieron {len(mensajes)} archivo(s).'
+    )
     return "Archivos procesados:<br>" + "<br>".join(mensajes)
 
 @app.route('/evaluados/<establecimiento>', methods=['POST'])
 def evaluados(establecimiento):
     if 'usuario' not in session:
         return redirect(url_for('index'))
-
     cantidad = request.form.get('alumnos')
     usuario = session['usuario']
-    enviar_correo(
+    enviar_correo_sendgrid(
         asunto=f'Alumnos evaluados - {establecimiento}',
         cuerpo=f'Doctora: {usuario}\nEstablecimiento: {establecimiento}\nCantidad evaluada: {cantidad}'
     )
     return f'Datos enviados correctamente: {cantidad} alumnos evaluados.'
 
-# --- Función de envío de correo ---
-def enviar_correo(asunto, cuerpo):
-    EMAIL_REMITENTE = 'noreply@cardiohome.cl'
-    EMAIL_RECEPTOR = 'jmiraandal@gmail.com'
-    CONTRASEÑA = 'Estafa123'
+# --- Envío de correos con SendGrid ---
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+SENDGRID_FROM = 'noreply@cardiohome.cl'
+SENDGRID_TO = 'jmiraandal@gmail.com'
 
-    mensaje = EmailMessage()
-    mensaje['Subject'] = asunto
-    mensaje['From'] = EMAIL_REMITENTE
-    mensaje['To'] = EMAIL_RECEPTOR
-    mensaje.set_content(cuerpo)
-
+def enviar_correo_sendgrid(asunto, cuerpo):
+    if not SENDGRID_API_KEY:
+        print("Falta SENDGRID_API_KEY en variables de entorno")
+        return
+    data = {
+        "personalizations": [{"to": [{"email": SENDGRID_TO}]}],
+        "from": {"email": SENDGRID_FROM},
+        "subject": asunto,
+        "content": [{"type": "text/plain", "value": cuerpo}]
+    }
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(EMAIL_REMITENTE, CONTRASEÑA)
-            smtp.send_message(mensaje)
+        response = requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={
+                "Authorization": f"Bearer {SENDGRID_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=data
+        )
+        print(f"Correo enviado, status: {response.status_code}")
     except Exception as e:
-        print(f"Error al enviar correo: {e}")
+        print(f"Error al enviar correo con SendGrid: {e}")
 
 # --- Crear carpeta de subida si no existe ---
 if not os.path.exists(UPLOAD_FOLDER):
