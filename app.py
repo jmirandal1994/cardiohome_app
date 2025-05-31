@@ -1,8 +1,12 @@
-
-from flask import Flask, render_template, request, redirect, session, url_for, flash
+from flask import Flask, render_template, request, redirect, session, url_for, flash, send_file
 import os
 import requests
 from werkzeug.utils import secure_filename
+from datetime import datetime, date
+from openpyxl import load_workbook
+import io
+from PyPDF2 import PdfReader, PdfWriter
+from supabase import create_client, Client
 
 # --- Configuración inicial ---
 app = Flask(__name__)
@@ -10,6 +14,13 @@ app.secret_key = 'clave_super_segura'
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'xls', 'xlsx'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+PDF_BASE = 'FORMULARIO TIPO NEUROLOGIA INFANTIL EDITABLE.pdf'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# --- Supabase ---
+SUPABASE_URL = "https://xxxxxxxx.supabase.co"
+SUPABASE_KEY = "xxxxx"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Usuarios simulados ---
 USUARIOS = {
@@ -27,6 +38,21 @@ EVENTOS = [
 # --- Funciones auxiliares ---
 def permitido(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def calculate_age(birth_date):
+    today = date.today()
+    years = today.year - birth_date.year
+    months = today.month - birth_date.month
+    if months < 0:
+        years -= 1
+        months += 12
+    return f"{years} años con {months} meses"
+
+def guess_gender(name):
+    name = name.lower()
+    if name.endswith("a"):
+        return "F"
+    return "M"
 
 # --- Rutas ---
 @app.route('/')
@@ -107,6 +133,80 @@ def evaluados(establecimiento):
     )
     return f'Datos enviados correctamente: {cantidad} alumnos evaluados.'
 
+@app.route('/relleno_formularios', methods=['GET', 'POST'])
+def relleno_formularios():
+    if request.method == 'POST':
+        establecimiento = request.form['establecimiento']
+        file = request.files['excel']
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
+        wb = load_workbook(filepath)
+        ws = wb.active
+
+        estudiantes = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            nombre, rut, fecha_nac_str, nacionalidad = row
+            fecha_nac = datetime.strptime(str(fecha_nac_str), "%d-%m-%Y").date()
+            edad = calculate_age(fecha_nac)
+            sexo = guess_gender(nombre.split()[0])
+
+            estudiante = {
+                'nombre': nombre,
+                'rut': rut,
+                'fecha_nacimiento': fecha_nac.strftime("%d-%m-%Y"),
+                'edad': edad,
+                'nacionalidad': nacionalidad,
+                'sexo': sexo
+            }
+            estudiantes.append(estudiante)
+
+        session['estudiantes'] = estudiantes
+        return render_template('formulario_relleno.html', estudiantes=estudiantes)
+
+    return render_template('subir_excel.html')
+
+@app.route('/generar_pdf', methods=['POST'])
+def generar_pdf():
+    datos = request.form
+    estudiante_id = int(datos['index'])
+    estudiante = session['estudiantes'][estudiante_id]
+
+    diagnostico = datos['diagnostico']
+    estado_general = datos['estado_general']
+    derivaciones = datos['derivaciones']
+    fecha_reevaluacion = datos['fecha_reevaluacion']
+    fecha_evaluacion = date.today().strftime("%d-%m-%Y")
+
+    reader = PdfReader(PDF_BASE)
+    writer = PdfWriter()
+    writer.append(reader)
+
+    data = {
+        'nombre': estudiante['nombre'],
+        'rut': estudiante['rut'],
+        'fecha_nacimiento': estudiante['fecha_nacimiento'],
+        'edad': estudiante['edad'],
+        'nacionalidad': estudiante['nacionalidad'],
+        'diagnostico_1': diagnostico,
+        'diagnostico_2': diagnostico,
+        'estado_general': estado_general,
+        'derivaciones': derivaciones,
+        'fecha_evaluacion': fecha_evaluacion,
+        'fecha_reevaluacion': fecha_reevaluacion,
+        'sexo_f': "Yes" if estudiante['sexo'] == 'F' else "Off",
+        'sexo_m': "Yes" if estudiante['sexo'] == 'M' else "Off"
+    }
+
+    writer.update_page_form_field_values(writer.pages[0], data)
+
+    pdf_output = io.BytesIO()
+    writer.write(pdf_output)
+    pdf_output.seek(0)
+
+    return send_file(pdf_output, as_attachment=True, download_name=f"{estudiante['nombre']}_formulario.pdf")
+
 # --- Envío de correos con SendGrid ---
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 SENDGRID_FROM = 'noreply@cardiohome.cl'
@@ -134,10 +234,6 @@ def enviar_correo_sendgrid(asunto, cuerpo):
         print(f"Correo enviado, status: {response.status_code}")
     except Exception as e:
         print(f"Error al enviar correo con SendGrid: {e}")
-
-# --- Crear carpeta de subida si no existe ---
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
 
 # --- Ejecutar la app ---
 if __name__ == '__main__':
